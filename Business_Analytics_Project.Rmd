@@ -1,30 +1,36 @@
 ---
-title: "Business Analytics Project"
-author: "Devjyoti Kundu"
-date: "2026-08-06"
-output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
+|  |
+|-----|
+| title: "Business Analytics Project" author: "Devjyoti Kundu" date: "2026-08-06" output: html_document |
+| Topic: FMCG Urban versus Rural market Penetration |
 
-## R Markdown
+#  Project Theme
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+FMCG Rural versus Urban Market Penetration
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+FMCG (Fast-Moving Consumer Goods) are products that are purchased
+frequently and generally consumed quickly, such as packaged food,
+beverages, personal-care products, household-care products and other
+daily-use products.
 
-```{r cars}
-summary(cars)
-```
+The project aims to investigate how FMCG market penetration differs
+between rural and urban markets in India.
 
-## Including Plots
+#  Type of Analytics Selected: Descriptive Analytics:
 
-You can also embed plots, for example:
+For the first stage of the project, I have selected Descriptive
+Analytics.
 
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
+Descriptive analytics focuses on understanding and summarizing existing
+data. In this project, it can help us understand the differences in FMCG
+consumption/penetration between rural and urban consumers.
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+#The analysis includes:
+
+i)FMCG consumption by rural and urban households  ii)Penetration of different FMCG categories   iii)Regional differences   iv)Consumer spending patterns   v)Differences in household characteristics   vi)Changes in consumption over time, if time-series data are available
+
