@@ -1,6 +1,6 @@
 ---
-editor_options: 
-  markdown: 
+editor_options:
+  markdown:
     wrap: 72
 ---
 
@@ -29,8 +29,941 @@ Analytics.
 Descriptive analytics focuses on understanding and summarizing existing
 data. In this project, it can help us understand the differences in FMCG
 consumption/penetration between rural and urban consumers.
+# The single most question which we are investigating:
+How do FMCG purchasing patterns, consumer behavior, and transaction spending differ between rural and urban markets in India, and what business insights can be derived from these differences?
 
 #The analysis includes:
-
 i)FMCG consumption by rural and urban households  ii)Penetration of different FMCG categories   iii)Regional differences   iv)Consumer spending patterns   v)Differences in household characteristics   vi)Changes in consumption over time, if time-series data are available
+
+#Source of Data:
+India - Household Consumption Expenditure Survey: 2022-23 https://share.google/ZP1dZLD6tiizWGeAI
+
+merging of LEVEL-01(Section 1 and 1_1) & LEVEL05
+
+# Indian FMCG Market Analysis
+## Rural vs Urban Business Analytics
+
+```{r setup, message=FALSE, warning=FALSE}
+packages <- c(
+  "readr", "dplyr", "tidyr", "ggplot2",
+  "janitor", "stringr", "lubridate",
+  "corrplot", "broom", "car", "lmtest",
+  "knitr", "scales"
+)
+
+new_packages <- setdiff(
+  packages,
+  rownames(installed.packages())
+)
+
+if(length(new_packages) > 0) {
+  install.packages(new_packages)
+}
+
+invisible(lapply(packages, library, character.only = TRUE))
+
+theme_set(theme_minimal(base_size = 12))
+set.seed(123)
+```
+# 1. Data Import
+
+```{r data-import}
+file_path <- file.choose()
+
+data_raw <- readr::read_csv(
+  file_path,
+  show_col_types = FALSE,
+  guess_max = 20000
+)
+
+data <- data_raw %>%
+  janitor::clean_names()
+
+cat("Rows:", nrow(data), "\n")
+cat("Columns:", ncol(data), "\n")
+
+names(data)
+head(data)
+```
+# 2. Data Understanding
+
+```{r data-understanding}
+dim(data)
+str(data)
+summary(data)
+dplyr::glimpse(data)
+```
+
+
+
+
+
+# 3. Data Cleaning
+```{r data-cleaning}
+
+
+# Remove exact duplicate rows
+duplicate_count <- sum(duplicated(data))
+
+data <- data %>%
+  distinct()
+
+cat("Duplicates removed:", duplicate_count)
+
+# Convert date
+data <- data %>%
+  mutate(
+    transaction_date = as.Date(transaction_date)
+  )
+
+# Convert numeric variables
+numeric_columns <- c(
+  "age",
+  "household_size",
+  "estimated_monthly_household_income_inr",
+  "reference_mpce_2023_24_inr",
+  "quantity",
+  "unit_price_inr",
+  "discount_percent",
+  "gross_amount_inr",
+  "tax_amount_inr",
+  "net_transaction_amount_inr",
+  "delivery_time_days",
+  "customer_rating_1_to_5"
+)
+
+data <- data %>%
+  mutate(
+    across(
+      all_of(numeric_columns),
+      ~ readr::parse_number(as.character(.x))
+    )
+  )
+
+# Clean text columns
+data <- data %>%
+  mutate(
+    across(
+      where(is.character),
+      ~ stringr::str_squish(.x)
+    )
+  )
+
+# Standardise area type
+data <- data %>%
+  mutate(
+    area_type = str_to_title(area_type),
+    area_type = case_when(
+      str_detect(str_to_lower(area_type), "rural") ~ "Rural",
+      str_detect(str_to_lower(area_type), "urban") ~ "Urban",
+      TRUE ~ area_type
+    )
+  )
+
+# Convert categorical variables
+categorical_columns <- c(
+  "state_ut", "district_cluster_synthetic",
+  "area_type", "gender", "product_category",
+  "product_name", "brand", "brand_preference",
+  "purchase_frequency", "purchase_channel",
+  "store_type", "payment_method", "promotion_flag",
+  "price_sensitivity", "stock_status"
+)
+
+data <- data %>%
+  mutate(
+    across(all_of(categorical_columns), as.factor)
+  )
+
+summary(data)
+```
+# 4. Missing Value Analysis
+
+```{r missing-values}
+missing_report <- data %>%
+  summarise(
+    across(everything(), ~sum(is.na(.x)))
+  ) %>%
+  pivot_longer(
+    everything(),
+    names_to = "Variable",
+    values_to = "Missing_Count"
+  ) %>%
+  mutate(
+    Missing_Percentage =
+      round(Missing_Count / nrow(data) * 100, 2)
+  ) %>%
+  arrange(desc(Missing_Percentage))
+
+knitr::kable(missing_report)
+```
+
+```{r missing-graph}
+ggplot(
+  missing_report,
+  aes(
+    x = reorder(Variable, Missing_Count),
+    y = Missing_Count
+  )
+) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Missing Values by Variable",
+    x = "Variables",
+    y = "Missing Values"
+  )
+```
+
+
+# 5. Outlier Analysis
+
+```{r outlier-analysis}
+numeric_data <- data %>%
+  select(where(is.numeric))
+
+outlier_report <- numeric_data %>%
+  pivot_longer(
+    everything(),
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  group_by(Variable) %>%
+  summarise(
+    Q1 = quantile(Value, 0.25, na.rm = TRUE),
+    Q3 = quantile(Value, 0.75, na.rm = TRUE),
+    IQR_Value = IQR(Value, na.rm = TRUE),
+    Lower_Limit = Q1 - 1.5 * IQR_Value,
+    Upper_Limit = Q3 + 1.5 * IQR_Value,
+    Outliers = sum(
+      Value < Lower_Limit | Value > Upper_Limit,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+knitr::kable(outlier_report)
+```
+
+# 6. Descriptive Statistics
+
+```{r descriptive-statistics}
+descriptive_stats <- numeric_data %>%
+  summarise(
+    across(
+      everything(),
+      list(
+        Mean = ~mean(.x, na.rm = TRUE),
+        Median = ~median(.x, na.rm = TRUE),
+        SD = ~sd(.x, na.rm = TRUE),
+        Minimum = ~min(.x, na.rm = TRUE),
+        Maximum = ~max(.x, na.rm = TRUE)
+      )
+    )
+  )
+
+knitr::kable(
+  t(descriptive_stats),
+  digits = 2
+)
+```
+
+# 7. Rural vs Urban Analysis
+
+## 7.1 Transaction Count
+
+```{r area-count}
+area_summary <- data %>%
+  filter(!is.na(area_type)) %>%
+  count(area_type)
+
+knitr::kable(area_summary)
+
+ggplot(
+  area_summary,
+  aes(x = area_type, y = n, fill = area_type)
+) +
+  geom_col() +
+  labs(
+    title = "Rural vs Urban Transaction Count",
+    x = "Area Type",
+    y = "Number of Transactions"
+  ) +
+  guides(fill = "none")
+```
+
+## 7.2 Spending Comparison
+
+```{r spending-comparison}
+area_spending <- data %>%
+  filter(
+    !is.na(area_type),
+    !is.na(net_transaction_amount_inr)
+  ) %>%
+  group_by(area_type) %>%
+  summarise(
+    Transactions = n(),
+    Average_Spending = mean(
+      net_transaction_amount_inr
+    ),
+    Median_Spending = median(
+      net_transaction_amount_inr
+    ),
+    Total_Spending = sum(
+      net_transaction_amount_inr
+    ),
+    .groups = "drop"
+  )
+
+knitr::kable(area_spending, digits = 2)
+
+ggplot(
+  data,
+  aes(
+    x = area_type,
+    y = net_transaction_amount_inr
+  )
+) +
+  geom_boxplot(fill = "skyblue", na.rm = TRUE) +
+  labs(
+    title = "Rural vs Urban Transaction Amount",
+    x = "Area Type",
+    y = "Net Transaction Amount (INR)"
+  )
+```
+
+## 7.3 Hypothesis Testing
+
+```{r hypothesis-test}
+# H0: Rural and urban mean transaction amounts are equal.
+# H1: Rural and urban mean transaction amounts differ.
+
+test_data <- data %>%
+  filter(
+    area_type %in% c("Rural", "Urban"),
+    !is.na(net_transaction_amount_inr)
+  )
+
+if(
+  all(c("Rural", "Urban") %in% unique(test_data$area_type)) &&
+  all(table(test_data$area_type) >= 2)
+) {
+  t.test(
+    net_transaction_amount_inr ~ area_type,
+    data = test_data
+  )
+}
+```
+# 8. Product Category Analysis
+
+```{r category-analysis}
+category_summary <- data %>%
+  filter(!is.na(product_category)) %>%
+  count(product_category, sort = TRUE)
+
+knitr::kable(category_summary)
+
+ggplot(
+  category_summary,
+  aes(
+    x = reorder(product_category, n),
+    y = n
+  )
+) +
+  geom_col(fill = "darkcyan") +
+  coord_flip() +
+  labs(
+    title = "FMCG Transactions by Product Category",
+    x = "Product Category",
+    y = "Transactions"
+  )
+```
+
+# 9. Brand Analysis
+
+```{r brand-analysis}
+brand_summary <- data %>%
+  filter(!is.na(brand)) %>%
+  count(brand, sort = TRUE) %>%
+  slice_head(n = 15)
+
+knitr::kable(brand_summary)
+
+ggplot(
+  brand_summary,
+  aes(
+    x = reorder(brand, n),
+    y = n
+  )
+) +
+  geom_col(fill = "coral") +
+  coord_flip() +
+  labs(
+    title = "Top 15 FMCG Brands",
+    x = "Brand",
+    y = "Transaction Count"
+  )
+```
+
+# 10. Rural vs Urban Product Preferences
+
+```{r category-area}
+category_area <- data %>%
+  filter(
+    !is.na(product_category),
+    !is.na(area_type)
+  ) %>%
+  count(product_category, area_type)
+
+ggplot(
+  category_area,
+  aes(
+    x = product_category,
+    y = n,
+    fill = area_type
+  )
+) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(
+    title = "Product Category Preferences by Area",
+    x = "Product Category",
+    y = "Transaction Count",
+    fill = "Area"
+  )
+```
+
+# 11. State-wise Analysis
+
+```{r state-analysis}
+state_summary <- data %>%
+  filter(!is.na(state_ut)) %>%
+  count(state_ut, sort = TRUE)
+
+knitr::kable(state_summary)
+
+ggplot(
+  state_summary,
+  aes(
+    x = reorder(state_ut, n),
+    y = n
+  )
+) +
+  geom_col(fill = "slateblue") +
+  coord_flip() +
+  labs(
+    title = "State-wise FMCG Transactions",
+    x = "State / UT",
+    y = "Transactions"
+  )
+```
+
+# 12. Payment Method Analysis
+
+```{r payment-analysis}
+payment_summary <- data %>%
+  filter(!is.na(payment_method)) %>%
+  count(payment_method, sort = TRUE)
+
+ggplot(
+  payment_summary,
+  aes(
+    x = reorder(payment_method, n),
+    y = n
+  )
+) +
+  geom_col(fill = "mediumpurple") +
+  coord_flip() +
+  labs(
+    title = "Payment Method Distribution",
+    x = "Payment Method",
+    y = "Transactions"
+  )
+```
+
+# 13. Purchase Frequency Analysis
+
+```{r frequency-analysis}
+frequency_summary <- data %>%
+  filter(!is.na(purchase_frequency)) %>%
+  count(purchase_frequency, sort = TRUE)
+
+ggplot(
+  frequency_summary,
+  aes(
+    x = reorder(purchase_frequency, n),
+    y = n
+  )
+) +
+  geom_col(fill = "darkorange") +
+  coord_flip() +
+  labs(
+    title = "Purchase Frequency",
+    x = "Purchase Frequency",
+    y = "Transactions"
+  )
+```
+
+# 14. Income and Reference MPCE Analysis
+
+```{r income-mpce}
+ggplot(
+  data,
+  aes(
+    x = estimated_monthly_household_income_inr,
+    y = reference_mpce_2023_24_inr,
+    color = area_type
+  )
+) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Household Income and Reference MPCE",
+    x = "Estimated Monthly Household Income (INR)",
+    y = "Reference MPCE (INR)",
+    color = "Area Type"
+  )
+```
+# 15. Correlation Analysis
+
+```{r correlation}
+correlation_data <- data %>%
+  select(
+    age,
+    household_size,
+    estimated_monthly_household_income_inr,
+    reference_mpce_2023_24_inr,
+    quantity,
+    unit_price_inr,
+    discount_percent,
+    gross_amount_inr,
+    tax_amount_inr,
+    net_transaction_amount_inr,
+    delivery_time_days,
+    customer_rating_1_to_5
+  )
+
+correlation_matrix <- cor(
+  correlation_data,
+  use = "pairwise.complete.obs"
+)
+
+corrplot(
+  correlation_matrix,
+  method = "color",
+  type = "upper",
+  tl.col = "black",
+  tl.srt = 45,
+  addCoef.col = "black",
+  number.cex = 0.55
+)
+```
+
+# 16. Regression Analysis
+
+The outcome is net transaction amount. We use customer and purchasing characteristics as predictors. We exclude gross amount, tax, discount, quantity and unit price because these are directly involved in calculating transaction value and could make the model misleading.
+
+```{r regression}
+model_data <- data %>%
+  select(
+    net_transaction_amount_inr,
+    area_type,
+    age,
+    gender,
+    household_size,
+    estimated_monthly_household_income_inr,
+    reference_mpce_2023_24_inr,
+    product_category,
+    brand_preference,
+    purchase_frequency,
+    purchase_channel,
+    store_type,
+    payment_method,
+    promotion_flag,
+    price_sensitivity,
+    delivery_time_days,
+    customer_rating_1_to_5
+  ) %>%
+  drop_na()
+
+# Remove unused factor levels
+model_data <- droplevels(model_data)
+
+# Keep only predictors with variation
+predictors <- setdiff(names(model_data),
+                      "net_transaction_amount_inr")
+
+predictors <- predictors[
+  sapply(
+    model_data[predictors],
+    function(x) n_distinct(x) > 1
+  )
+]
+
+# Random training/testing split
+set.seed(123)
+
+train_index <- sample(
+  seq_len(nrow(model_data)),
+  size = floor(0.8 * nrow(model_data))
+)
+
+train_data <- model_data[train_index, ]
+test_data <- model_data[-train_index, ]
+
+# Remove factor levels absent from training data
+for(v in predictors) {
+  if(is.factor(train_data[[v]])) {
+    train_data[[v]] <- droplevels(train_data[[v]])
+
+    test_data[[v]] <- factor(
+      as.character(test_data[[v]]),
+      levels = levels(train_data[[v]])
+    )
+  }
+}
+
+test_data <- test_data[complete.cases(test_data), ]
+
+# Fit multiple linear regression
+regression_formula <- reformulate(
+  predictors,
+  response = "net_transaction_amount_inr"
+)
+
+model <- lm(
+  regression_formula,
+  data = train_data
+)
+
+summary(model)
+
+# Coefficients
+broom::tidy(model)
+
+# Model performance on test data
+predictions <- predict(model, newdata = test_data)
+
+actual <- test_data$net_transaction_amount_inr
+
+if(length(actual) > 0) {
+
+  RMSE <- sqrt(mean((actual - predictions)^2))
+
+  MAE <- mean(abs(actual - predictions))
+
+  R_squared <- 1 -
+    sum((actual - predictions)^2) /
+    sum((actual - mean(actual))^2)
+
+  data.frame(
+    RMSE = RMSE,
+    MAE = MAE,
+    Test_R_Squared = R_squared
+  )
+}
+```
+
+# 17. Regression Diagnostics
+
+```{r regression-diagnostics}
+par(mfrow = c(2, 2))
+
+plot(model)
+
+par(mfrow = c(1, 1))
+
+# Heteroscedasticity test
+lmtest::bptest(model)
+
+# Multicollinearity
+try(car::vif(model), silent = TRUE)
+```
+
+
+# 18. Actual vs Predicted Graph
+
+```{r prediction-graph}
+prediction_results <- data.frame(
+  Actual = actual,
+  Predicted = as.numeric(predictions)
+)
+
+ggplot(
+  prediction_results,
+  aes(x = Actual, y = Predicted)
+) +
+  geom_point(alpha = 0.4) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    color = "red",
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Actual vs Predicted Transaction Amount",
+    x = "Actual Amount (INR)",
+    y = "Predicted Amount (INR)"
+  )
+```
+
+# 19. Export Results
+
+```{r export-results}
+write.csv(
+  data,
+  "cleaned_fmcg_dataset.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  missing_report,
+  "missing_values_report.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  outlier_report,
+  "outlier_analysis.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  area_spending,
+  "rural_urban_comparison.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  category_summary,
+  "category_analysis.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  brand_summary,
+  "brand_analysis.csv",
+  row.names = FALSE
+)
+```
+#project report:
+----------------
+#Research Objective 1: FMCG Consumption by Rural and Urban Households
+
+The analysis reveals that rural areas demonstrate higher FMCG transaction activity than urban areas. Out of 200,000 recorded transactions, 115,968 (58%) belong to rural areas, while 84,032 (42%) belong to urban areas.
+
+The spending comparison indicates that rural consumers have an average transaction value of ₹243.61, compared with ₹212.15 for urban consumers. The median transaction values are ₹171 and ₹148, respectively. Total transaction spending is also higher in rural areas, amounting to ₹2,82,50,718 compared with ₹1,78,27,548 in urban areas.
+
+To examine whether the difference in average transaction spending is statistically significant, a Welch Two Sample t-test was conducted.
+
+The test produced a t-statistic of 33.42 and a p-value below 0.05. Therefore, the null hypothesis of equal mean transaction spending is rejected. The 95% confidence interval for the difference in mean spending ranges from ₹29.61 to ₹33.30.
+
+Overall, the results indicate that rural areas have higher transaction representation, higher average transaction spending and higher total transaction value in the analysed dataset. The statistical test also confirms a significant difference in average transaction spending between rural and urban groups.
+
+From a business perspective, these findings suggest that rural markets deserve considerable attention when planning FMCG distribution, product availability and marketing strategies.
+
+
+
+#Research Objective 2: Penetration and Distribution of Different FMCG Categories
+
+The category-wise analysis identifies Packaged Foods as the most frequently purchased FMCG category, with 43,371 recorded transactions. It is followed by Staples & Edible Oils with 31,153 transactions and Personal Care with 27,669 transactions. Baby Care records the lowest transaction count, with 9,514 transactions.
+
+The rural–urban comparison reveals that rural areas have higher transaction counts in six out of eight product categories. Packaged Foods records 26,667 rural transactions compared with 16,704 urban transactions. Similarly, Staples & Edible Oils records 21,028 rural transactions against 10,125 urban transactions.
+
+Rural areas also demonstrate higher transaction counts in Personal Care, Dairy & Bakery, Home Care and Beverages. However, urban areas record higher transactions in Health & Hygiene and Baby Care.
+
+Overall, Packaged Foods emerges as the leading FMCG category across both market segments. Rural areas demonstrate stronger transaction representation across most categories, whereas Health & Hygiene and Baby Care show higher urban representation.
+
+From a business perspective, FMCG companies can consider strengthening packaged food and essential product distribution across rural markets while investigating the relatively higher urban representation of Health & Hygiene and Baby Care. Category-specific inventory and marketing strategies may help address the differences observed between the two market segments.
+
+#State with highest number of FMCG transaction:
+Uttar Pradesh recorded the highest number of FMCG transactions (30,425), followed by Maharashtra (18,587) and Bihar (16,279). Among the ten states shown, Odisha recorded the lowest number of transactions (6,678).
+These results indicate that Uttar Pradesh has the strongest transaction representation among the listed states in the dataset. Regional differences may help businesses understand where their recorded FMCG activity is concentrated and plan distribution and marketing strategies accordingly.
+
+#Analysis of househole characteristics:
+1. Age: Rural and urban records show almost identical average ages (38.4 and 38.3 years). Both have a median age of 38 years.
+2. Household Size: Rural records have a higher average household size of 4.79 compared with 3.72 in urban records.
+3. Household Income: Urban records show a higher average monthly household income of ₹84,285, compared with ₹71,642 for rural records.
+4. Gender Distribution: Female transactions are slightly higher than male transactions in both rural and urban categories.
+5. Overall Finding: The dataset indicates that rural records are associated with larger household sizes, whereas urban records are associated with higher average household income. Age distribution is nearly identical across both areas.
+
+
+#Analysis of FMCG Consumption Trends Over Time:
+
+```{r consumption-trend-analysis}
+# ==========================================
+# RESEARCH OBJECTIVE 6
+# FMCG CONSUMPTION TRENDS OVER TIME
+# ==========================================
+
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(scales)
+
+# 1. Convert transaction date
+data$transaction_date <- as.Date(data$transaction_date)
+
+# 2. Monthly consumption analysis
+monthly_trend <- data %>%
+  filter(
+    !is.na(transaction_date),
+    !is.na(area_type)
+  ) %>%
+  mutate(
+    Month = floor_date(transaction_date, "month")
+  ) %>%
+  group_by(Month, area_type) %>%
+  summarise(
+    Total_Transactions = n(),
+    Total_Spending = sum(
+      net_transaction_amount_inr,
+      na.rm = TRUE
+    ),
+    Average_Spending = mean(
+      net_transaction_amount_inr,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) %>%
+  arrange(Month)
+
+# 3. Display monthly results
+print(monthly_trend, n = Inf)
+
+# 4. Monthly transaction volume trend
+ggplot(monthly_trend,
+       aes(x = Month,
+           y = Total_Transactions,
+           color = area_type,
+           group = area_type)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  labs(
+    title = "Monthly FMCG Transaction Trends",
+    x = "Month",
+    y = "Number of Transactions",
+    color = "Area Type"
+  ) +
+  theme_minimal()
+
+# 5. Monthly total spending trend
+ggplot(monthly_trend,
+       aes(x = Month,
+           y = Total_Spending,
+           color = area_type,
+           group = area_type)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Monthly FMCG Spending Trends",
+    x = "Month",
+    y = "Total Spending (INR)",
+    color = "Area Type"
+  ) +
+  theme_minimal()
+
+# 6. Monthly average spending trend
+ggplot(monthly_trend,
+       aes(x = Month,
+           y = Average_Spending,
+           color = area_type,
+           group = area_type)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  labs(
+    title = "Monthly Average Transaction Spending",
+    x = "Month",
+    y = "Average Spending (INR)",
+    color = "Area Type"
+  ) +
+  theme_minimal()
+
+# 7. Overall monthly trend
+overall_monthly_trend <- data %>%
+  filter(!is.na(transaction_date)) %>%
+  mutate(
+    Month = floor_date(transaction_date, "month")
+  ) %>%
+  group_by(Month) %>%
+  summarise(
+    Total_Transactions = n(),
+    Total_Spending = sum(
+      net_transaction_amount_inr,
+      na.rm = TRUE
+    ),
+    Average_Spending = mean(
+      net_transaction_amount_inr,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) %>%
+  arrange(Month)
+
+print(overall_monthly_trend, n = Inf)
+
+# 8. Overall monthly spending graph
+ggplot(overall_monthly_trend,
+       aes(x = Month, y = Total_Spending)) +
+  geom_line(linewidth = 1, color = "steelblue") +
+  geom_point() +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Overall Monthly FMCG Consumption Trend",
+    x = "Month",
+    y = "Total Spending (INR)"
+  ) +
+  theme_minimal()
+```
+
+1. Monthly FMCG Consumption Analysis
+
+Monthly transaction records were analysed to examine changes in FMCG consumption expenditure over time. The analysis considered total transactions, total spending, and average transaction spending across rural and urban areas.
+
+2. Graphical Analysis
+
+Figure: Overall Monthly FMCG Consumption Trend
+
+The graphical representation illustrates the variation in total monthly FMCG spending throughout the observed dataset.
+
+3. Interpretation and Key Findings
+
+1. Fluctuating Consumption: Monthly FMCG spending shows considerable fluctuations throughout the observed period.
+
+2. No Consistent Growth: The spending pattern does not indicate a continuous upward trend.
+
+3. No Consistent Decline: Similarly, the graph does not show a continuous downward trend.
+
+4. Variation in Expenditure: Most monthly spending observations appear to fall between approximately ₹1,10,000 and ₹1,40,000, with occasional higher and lower values.
+
+5. Rural and Urban Differences: The monthly comparison shows differences in spending between rural and urban transactions, with rural spending generally higher in the initial months displayed in the analysis.
+
+4. Overall Finding
+
+The analysis indicates that FMCG consumption expenditure in the generated dataset fluctuates over the observed period rather than following a consistent increasing or decreasing trend. These monthly variations reflect changes in transaction volume and spending patterns across rural and urban areas.
+
+#CONCLUSION:
+
+The project, titled “Indian FMCG Market Analysis: Rural vs Urban Business Analytics,” was undertaken to examine differences in FMCG consumption patterns, category distribution, regional variations, consumer spending behaviour, household characteristics, and consumption trends over time.
+
+The analysis revealed several important findings from the generated dataset. Rural transactions accounted for a larger share of the recorded activity, with 115,968 transactions compared to 84,032 urban transactions. Rural transactions also showed higher average spending of ₹243.61, compared to ₹212.15 for urban transactions. The statistical test confirmed that this difference in average transaction spending was significant.
+
+Among the different FMCG categories, Packaged Foods recorded the highest number of transactions, followed by Staples & Edible Oils and Personal Care. Rural areas recorded higher transaction counts in six out of eight product categories, while urban areas recorded higher counts in Baby Care and Health & Hygiene.
+
+Regional analysis showed variations in transaction distribution across states. Uttar Pradesh recorded the highest number of transactions among the states visible in the initial analysis, followed by Maharashtra and Bihar, indicating differences in regional representation within the dataset.
+
+The household characteristics analysis revealed that rural records had a higher average household size of 4.79, compared to 3.72 in urban records. However, urban records showed a higher average monthly household income of ₹84,285, compared to ₹71,642 for rural records. The average age was almost identical in both areas, at approximately 38 years.
+
+The consumer spending analysis showed that the average net transaction amount was ₹230.39, while the median was ₹161.32. This difference suggests that higher-value transactions influence the overall average spending.
+
+The consumption trend analysis indicated fluctuations in monthly FMCG expenditure rather than a consistent increasing or decreasing pattern across the observed dataset.
+
+Overall, the project demonstrates how data analytics techniques can be used to identify consumption patterns, compare rural and urban markets, understand product category preferences, and examine differences in consumer spending and household characteristics. These findings can help FMCG businesses understand transaction patterns and support decisions related to product distribution, marketing strategies, and regional market planning.
+
+Although the analysis provides useful insights, the dataset is synthetic and the transaction dates have limitations in calendar-year representation. Therefore, the findings represent patterns within the constructed dataset and should not be considered actual nationwide FMCG consumption estimates.
+
+In conclusion, the project successfully demonstrates the application of data cleaning, exploratory data analysis, statistical testing, data visualisation, correlation analysis, and regression techniques to an FMCG business analytics problem. It highlights the importance of data-driven decision-making in understanding rural and urban consumer markets.
+
+
 
